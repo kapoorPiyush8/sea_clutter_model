@@ -1,0 +1,126 @@
+import numpy as np
+import matplotlib.pyplot as plt
+
+# ============================================================
+# 1. RADAR PARAMETERS
+# ============================================================
+c = 3e8
+fc = 60e9
+lambda_c = c / fc
+
+B = 4e9
+T_chirp = 100e-6
+PRI = 200e-6
+PRF = 1/PRI
+
+Slope = B / T_chirp
+
+# ADC Sampling
+fs = 5e6
+N_fast = int(T_chirp * fs)
+t_fast = np.arange(N_fast) / fs
+
+# Slow-time
+N_slow = 64
+t_slow = np.arange(N_slow) * PRI
+
+# ============================================================
+# 2. BUILD DATA CUBE DIRECTLY FROM FMCW EQUATION
+# ============================================================
+
+radar_cube = np.zeros((N_slow, N_fast), dtype=complex)
+
+targets= [
+  PointTarget(range=20,
+              velocity=5,
+              rcs=5,
+              phase=0
+              ),
+  PointTarget(
+              range=45,
+              velocity=-1,
+              rcs=1,
+              phase=np.pi/3
+              ),
+  PointTarget(
+              range=10,
+              velocity=8,
+              rcs=-10,
+              phase=np.pi/5
+              )
+         ]
+         
+              
+
+v = 1.5          # m/s
+R0 = 2.0         # initial range
+
+for m in range(N_slow):
+
+    R = R0 + v * t_slow[m]
+    tau = 2*R/c
+
+    # FMCW beat signal formula (exact)
+    fb = Slope * tau
+    fd = 2*v/lambda_c
+
+    # Total beat signal includes both range beat and Doppler phase
+    beat = np.exp(1j * 2*np.pi * (fb * t_fast + fd * t_slow[m]))
+
+    radar_cube[m, :] = beat
+
+print("Data cube generated.")
+
+# ============================================================
+# 3. RANGE FFT
+# ============================================================
+
+range_fft = np.fft.fft(radar_cube, axis=1)
+range_fft = range_fft[:, :N_fast//2]
+
+# Remove mean (optional)
+range_fft -= np.mean(range_fft, axis=0)
+
+# ============================================================
+# 4. DOPPLER FFT
+# ============================================================
+
+rdm = np.fft.fftshift(np.fft.fft(range_fft, axis=0), axes=0)
+
+# ============================================================
+# 5. AXIS DEFINITIONS
+# ============================================================
+
+freq_fast = np.fft.fftfreq(N_fast, d=1/fs)[:N_fast//2]
+range_axis = (c * freq_fast) / (2*Slope)
+
+freq_slow = np.fft.fftshift(np.fft.fftfreq(N_slow, d=PRI))
+vel_axis = freq_slow * lambda_c / 2
+
+# ============================================================
+# 6. PLOT
+# ============================================================
+
+rdm_db = 20*np.log10(np.abs(rdm)+1e-12)
+rdm_db -= np.max(rdm_db)
+
+plt.figure(figsize=(10,6))
+plt.imshow(
+    rdm_db,
+    aspect='auto',
+    origin='lower',
+    extent=[range_axis[0], range_axis[-1],
+            vel_axis[0], vel_axis[-1]],
+    cmap='jet',
+    vmin=-40, vmax=0
+)
+
+plt.xlabel("Range (m)")
+plt.ylabel("Velocity (m/s)")
+plt.title("Time-Domain FMCW RDM")
+plt.colorbar(label="Power (dB)")
+
+plt.xlim(0,5)
+plt.ylim(-4,4)
+
+plt.show()
