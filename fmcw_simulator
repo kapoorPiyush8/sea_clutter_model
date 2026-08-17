@@ -49,8 +49,17 @@ targets= [
               phase=np.pi/5
               )
          ]
-         
-              
+
+#to be verified how to link rcs to this block below
+
+G_tx=10**(11.6/10) #11.6dBi
+G_rx= 10**(11.6/10) #tx and rx both are same
+R_new=50e3 #50km
+P_tx=1e3
+L=10**(0.05*50/10)
+
+P_rx= P_tx *G_tx*G_rx*(lambda_c**2)*rcs/((4*np.pi)**3*L*R_new**4)
+A=np.sqrt(P_rx)            
 
 v = 1.5          # m/s
 R0 = 2.0         # initial range
