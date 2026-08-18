@@ -4,9 +4,27 @@ import matplotlib.pyplot as plt
 # ============================================================
 # 1. RADAR PARAMETERS
 # ============================================================
+
 c = 3e8
 fc = 60e9
 lambda_c = c / fc
+
+#2. Antenna Gains
+
+G_tx=10**(11.6/10) #11.6dBi
+G_rx= 10**(11.6/10) #tx and rx both are same
+
+# 3. Transmit Power
+
+P_tx=1e3 #1kW=1000W
+
+#4. Loss definition 
+
+L_db=2.5
+
+L=10**(L_db/10)
+
+# 5. FMCW Parameters
 
 B = 4e9
 T_chirp = 100e-6
@@ -16,7 +34,7 @@ PRF = 1/PRI
 Slope = B / T_chirp
 
 # ADC Sampling
-fs = 5e6
+fs = 64e6 # check notes for calculation
 N_fast = int(T_chirp * fs)
 t_fast = np.arange(N_fast) / fs
 
@@ -25,63 +43,100 @@ N_slow = 64
 t_slow = np.arange(N_slow) * PRI
 
 # ============================================================
-# 2. BUILD DATA CUBE DIRECTLY FROM FMCW EQUATION
+# 6. DATA CUBE FROM FMCW EQUATION
 # ============================================================
 
 radar_cube = np.zeros((N_slow, N_fast), dtype=complex)
 
+# 7. targets: 5dBsm=3.162m^2, T2:1dBsm = 1.259 m^2, T3: -10dBsm=0.1m^2
+#R1=20m, R2=45m, R3=10m
+# v1=5m/s, v2=-1m/s, v3=8m/s
+
+#point target model
+
+class PointTarget:
+  def __init__(self,range,velocity,rcs_dbsm,phase):
+    self.range=range
+    self.velocity=velocity
+    self.rcs_dbsm=rcs_dbsm
+    self.phase=phase
+
 targets= [
   PointTarget(range=20,
               velocity=5,
-              rcs=5,
+              rcs_dbsm=5,
               phase=0
               ),
   PointTarget(
               range=45,
               velocity=-1,
-              rcs=1,
+              rcs_dbsm=1,
               phase=np.pi/3
               ),
   PointTarget(
               range=10,
-              velocity=8,
-              rcs=-10,
+              velocity=3,
+              rcs_dbsm=-10,
               phase=np.pi/5
               )
          ]
 
-#to be verified how to link rcs to this block below
 
-G_tx=10**(11.6/10) #11.6dBi
-G_rx= 10**(11.6/10) #tx and rx both are same
-R_new=50e3 #50km
-P_tx=1e3
-L=10**(0.05*50/10)
+def rcs_dbsm_to_linear(rcs_dbsm):
+  return 10**(rcs_dbsm/10)
 
-P_rx= P_tx *G_tx*G_rx*(lambda_c**2)*rcs/((4*np.pi)**3*L*R_new**4)
-A=np.sqrt(P_rx)            
 
-v = 1.5          # m/s
-R0 = 2.0         # initial range
+def received_amplitude(R,rcs_dbsm,P_tx,G_tx, G_rx, lambda_c,L):
+  sigma=rcs_dbsm_to_linear(rcs_dbsm)
+  P_rx= P_tx *G_tx*G_rx*(lambda_c**2)*sigma/((4*np.pi)**3*L*R**4)
+  A=np.sqrt(P_rx)
+  return A
 
-for m in range(N_slow):
 
-    R = R0 + v * t_slow[m]
+for target in targets:
+  
+  A=received_amplitude(
+      R=target.range,
+      rcs_dbsm=target.rcs_dbsm,
+      P_tx=P_tx,
+      G_tx=G_tx,
+      G_rx=G_rx,
+      lambda_c=lambda_c,
+      L=L
+  )
+  
+  print(
+      f"Target: R= {target.range} m,"
+      f"v = {target.velocity} m/s,"
+      f"rcs= {target.rcs_dbsm} dBsm,"
+      f"A= {A:.3e}"
+  )
+
+  for m in range(N_slow):
+    
+    R = target.range + target.velocity *t_slow[m]
+
+    phase = target.phase
+
     tau = 2*R/c
 
-    # FMCW beat signal formula (exact)
+    # FMCW beat signal formula
     fb = Slope * tau
-    fd = 2*v/lambda_c
+    fd = 2* target.velocity/lambda_c
 
     # Total beat signal includes both range beat and Doppler phase
-    beat = np.exp(1j * 2*np.pi * (fb * t_fast + fd * t_slow[m]))
+    beat = (
+        A * np.exp(1j * 2*np.pi * (fb * t_fast + fd * t_slow[m]+target.phase))
+    )
+    
+    
 
-    radar_cube[m, :] = beat
+    radar_cube[m, :] += beat
 
 print("Data cube generated.")
 
 # ============================================================
-# 3. RANGE FFT
+# 8. RANGE FFT
 # ============================================================
 
 range_fft = np.fft.fft(radar_cube, axis=1)
@@ -91,13 +146,13 @@ range_fft = range_fft[:, :N_fast//2]
 range_fft -= np.mean(range_fft, axis=0)
 
 # ============================================================
-# 4. DOPPLER FFT
+# 9. DOPPLER FFT
 # ============================================================
 
 rdm = np.fft.fftshift(np.fft.fft(range_fft, axis=0), axes=0)
 
 # ============================================================
-# 5. AXIS DEFINITIONS
+# 10. AXIS DEFINITIONS
 # ============================================================
 
 freq_fast = np.fft.fftfreq(N_fast, d=1/fs)[:N_fast//2]
@@ -107,11 +162,11 @@ freq_slow = np.fft.fftshift(np.fft.fftfreq(N_slow, d=PRI))
 vel_axis = freq_slow * lambda_c / 2
 
 # ============================================================
-# 6. PLOT
+# 11. PLOT
 # ============================================================
 
 rdm_db = 20*np.log10(np.abs(rdm)+1e-12)
-rdm_db -= np.max(rdm_db)
+#rdm_db -= np.max(rdm_db)
 
 plt.figure(figsize=(10,6))
 plt.imshow(
@@ -129,7 +184,7 @@ plt.ylabel("Velocity (m/s)")
 plt.title("Time-Domain FMCW RDM")
 plt.colorbar(label="Power (dB)")
 
-plt.xlim(0,5)
-plt.ylim(-4,4)
+plt.xlim(0,60)
+plt.ylim(-10,10)
 
 plt.show()
